@@ -3,10 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-  <title>KPI Intelligence Platform | Executive Control Tower</title>
+  <title>KPI Intelligence Platform v4.7 | Executive Control Tower</title>
 
   <!-- Core Dependencies -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -1260,9 +1261,15 @@
       color:var(--text);
     }
 
-    .chart-card canvas {
-      max-height:220px;
-    }
+    .chart-card canvas { height: 260px; min-height: 180px; width: 100%; display: block; }
+    /* barPlanActualChart is wrapped in a fixed-height div — canvas fills 100% of it */
+    #barPlanActualChart { height: 100%; min-height: unset; }
+    #horizontalAchievementChart { height: 100%; min-height: unset; }
+    #ownerAchievementChart { height: 360px; }
+    #categoryGapChart { height: 240px; }
+    #varianceTrendChart { height: 260px; }
+    #mixPerformanceChart { height: 260px; }
+    #trendChartCanvas, #primaryKpisChart { height: 220px; }
 
     /* Heatmap */
     .heatmap-wrap {
@@ -3047,6 +3054,22 @@
     .funnel-stage-pct  { font-size:0.7rem; color:var(--text-muted); margin-top:2px; }
     .funnel-conv-rate  { font-size:0.68rem; background:var(--surface-3); border-radius:6px; padding:2px 6px; margin-top:4px; display:inline-block; }
     .funnel-bottleneck { border-color:var(--danger) !important; background:rgba(239,68,68,0.06) !important; }
+
+    /* ========== SLA BREACH COUNTDOWN ========== */
+    .sla-countdown {
+      display:inline-flex;
+      align-items:center;
+      gap:4px;
+      background:rgba(251,191,36,0.16);
+      border:1px solid rgba(251,191,36,0.7);
+      color:var(--warning);
+      border-radius:999px;
+      padding:2px 7px;
+      font-size:0.62rem;
+      font-weight:700;
+      margin-left:6px;
+      white-space:nowrap;
+    }
   </style>
 </head>
 <body>
@@ -3389,6 +3412,7 @@
 
       <div class="footer-note">
         KPI Intelligence Platform · Forecast Risk Radar · Governance Auditability · CXO-Ready Views
+        <br><span style="opacity:0.7;font-size:0.72rem;">Powered with ❤️ by Sanju G</span>
       </div>
     </div>
     <!-- END dashboardView -->
@@ -3430,15 +3454,19 @@
             <h4><i class="fas fa-chart-line"></i> Portfolio Trend · Plan vs Actual vs Forecast</h4>
             <button class="chart-btn" id="downloadBarChartBtn"><i class="fas fa-download"></i> PNG</button>
           </div>
-          <canvas id="barPlanActualChart"></canvas>
+          <div style="position:relative;height:320px;max-height:320px;width:100%;overflow:hidden;">
+            <canvas id="barPlanActualChart" style="display:block;"></canvas>
+          </div>
         </article>
 
-        <article class="chart-card">
+        <article class="chart-card" style="max-height:420px;overflow:hidden;">
           <div class="chart-head">
             <h4><i class="fas fa-sitemap"></i> Gap Contribution Index</h4>
             <button class="chart-btn" id="downloadAchievementChartBtn"><i class="fas fa-download"></i> PNG</button>
           </div>
-          <canvas id="horizontalAchievementChart"></canvas>
+          <div style="position:relative;height:360px;max-height:360px;width:100%;overflow:hidden;">
+            <canvas id="horizontalAchievementChart" style="display:block;"></canvas>
+          </div>
         </article>
 
         <article class="chart-card">
@@ -3460,6 +3488,7 @@
         <article class="chart-card chart-span-2">
           <div class="chart-head">
             <h4><i class="fas fa-th"></i> Monthly Performance Heatmap</h4>
+            <button class="chart-btn" id="downloadHeatmapBtn"><i class="fas fa-download"></i> PNG</button>
           </div>
           <div id="heatmapContainer" class="heatmap-wrap"></div>
         </article>
@@ -3674,6 +3703,18 @@
             <div class="form-field" id="idealDaysField" style="display:none;">
               <label>Ideal Days (TAT target)</label>
               <input type="number" id="configKpiIdealDays" placeholder="4" min="1">
+            </div>
+            <div class="form-field">
+              <label>Weight (for portfolio scoring)</label>
+              <input type="number" id="configKpiWeight" placeholder="10" min="0" max="100" value="10">
+            </div>
+            <div class="form-field">
+              <label>Green Threshold (%)</label>
+              <input type="number" id="configKpiGreenThreshold" placeholder="90" min="0" max="100" value="90">
+            </div>
+            <div class="form-field">
+              <label>Amber Threshold (%)</label>
+              <input type="number" id="configKpiAmberThreshold" placeholder="60" min="0" max="100" value="60">
             </div>
           </div>
         </article>
@@ -4024,6 +4065,9 @@
     signOut
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
+  // NOTE: Firebase API keys are safe to include in client-side code — they identify
+  // your project, not grant access. Access is controlled entirely by Firebase Security Rules.
+  // Ensure Firestore rules require auth: allow read, write: if request.auth != null;
   const firebaseConfig = {
     apiKey: "AIzaSyDav3rI7fTr8KrXYxvnz5LB82CgjRq4v20",
     authDomain: "ais-showroom-dashboard.firebaseapp.com",
@@ -4037,8 +4081,26 @@
   const db = getFirestore(app);
   const auth = getAuth(app);
 
+  // ========== REGISTER CHARTJS PLUGINS ==========
+  function registerChartPlugins() {
+    try {
+      if (typeof ChartDataLabels !== 'undefined') {
+        Chart.register(ChartDataLabels);
+      } else {
+        setTimeout(function() {
+          if (typeof ChartDataLabels !== 'undefined') { Chart.register(ChartDataLabels); }
+        }, 500);
+      }
+    } catch(e) { console.warn('ChartDataLabels registration failed:', e); }
+  }
+  registerChartPlugins();
+  document.addEventListener('DOMContentLoaded', registerChartPlugins);
+
   // ========== CONSTANTS & HELPERS ==========
   const FY_MONTHS = ["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"];
+  // Configurable list of KPI IDs to permanently exclude from all views/filters
+  const EXCLUDED_KPI_IDS = ["partner_survey_score"];
+  function isExcludedKpi(k) { return EXCLUDED_KPI_IDS.includes(k.id) || EXCLUDED_KPI_IDS.includes(k.name); }
 
   function getFinancialMonth() {
     const cal = new Date().getMonth();
@@ -4101,7 +4163,8 @@
   let auditUnsub = null;
   let commentsUnsub = null;
   let isAdmin = false;
-  let pinnedKpis = JSON.parse(localStorage.getItem("pinnedKpis") || "[]");
+  let _compactViewMem = false;
+  let pinnedKpis = [];
   let compareList = [];
   // PHASE 2: skeleton loading state flag
   let kpiFirstLoad = true;
@@ -4111,11 +4174,18 @@
   let lastSnapshotTime = null;
   let healthTickerInterval = null;
   // PHASE 8: tile drag order
+  let _tileOrderMem = [];
+  const TILE_ORDER_KEY = 'kpi_tile_order';
   function getTileOrder() {
-    try { return JSON.parse(localStorage.getItem('kpiTileOrder') || '[]'); } catch(e) { return []; }
+    try {
+      const stored = localStorage.getItem(TILE_ORDER_KEY);
+      if (stored) { _tileOrderMem = JSON.parse(stored); }
+    } catch(e) { /* localStorage unavailable */ }
+    return _tileOrderMem.slice();
   }
   function saveTileOrder(order) {
-    localStorage.setItem('kpiTileOrder', JSON.stringify(order));
+    _tileOrderMem = order.slice();
+    try { localStorage.setItem(TILE_ORDER_KEY, JSON.stringify(order)); } catch(e) {}
   }
 
   // FIX 1: category state
@@ -4167,6 +4237,7 @@
 
   function hideSkeletons() {
     document.body.classList.remove('kpi-loading');
+    document.body.setAttribute('data-loaded', 'true');
     // Unmark chart cards
     document.querySelectorAll('.chart-card.is-loading').forEach(c => c.classList.remove('is-loading'));
     // Remove skeleton-show elements that were inline placeholders
@@ -4190,7 +4261,9 @@
       kpiId, kpiName, field: fieldChanged,
       oldValue: String(oldValue), newValue: String(newValue),
       user: currentUserEmail || currentUserId, userId: currentUserId,
-      timestamp: serverTimestamp()
+      timestamp: serverTimestamp(),
+      createdBy: currentUserEmail||'system',
+      createdAt: serverTimestamp()
     };
     try {
       await addDoc(collection(db, "kpi_audit_logs"), record);
@@ -4205,7 +4278,7 @@
     } else {
       pinnedKpis.push(kpiId);
     }
-    localStorage.setItem("pinnedKpis", JSON.stringify(pinnedKpis));
+    /* pinnedKpis stored in memory */
     renderAll();
   }
 
@@ -4218,7 +4291,7 @@
     const activeBtn = document.querySelector(`.sidebar-item[data-view="${viewId}"]`);
     if (activeBtn) activeBtn.classList.add('active');
     // Re-render charts when switching to analytics so they size correctly
-    if (viewId === 'analyticsView') { renderCharts(); renderAnalyticsExtras(); }
+    if (viewId === 'analyticsView') { requestAnimationFrame(function() { setTimeout(function() { try { renderCharts(); } catch(e){console.error('renderCharts',e);} try { renderAnalyticsExtras(); } catch(e){console.error('renderAnalyticsExtras',e);} try { renderPrimaryKpisChart(); } catch(e){console.error('renderPrimaryKpisChart',e);} }, 200); }); }
     // PHASE 7: render config view
     if (viewId === 'configView') { renderConfigView(); }
     // Update manage view month label
@@ -4244,15 +4317,14 @@
     const monthlyActual = parseFloat(monthlyActuals[currentMonth] || 0);
 
     let yearlyActual = 0;
+    let pctMonthsWithData = 0; // track for forecast extrapolation
     if (isPercentKpi) {
       let sum = 0;
-      let monthsWithData = 0;
       for (let i = 0; i <= currentMonth; i++) {
         const val = parseFloat(monthlyActuals[i] || 0);
-        sum += Math.min(100, Math.max(0, val));
-        if (val > 0 || i === 0) monthsWithData++;
+        if (val > 0) { sum += Math.min(100, val); pctMonthsWithData++; }
       }
-      yearlyActual = monthsWithData > 0 ? sum / monthsWithData : 0;
+      yearlyActual = pctMonthsWithData > 0 ? sum / pctMonthsWithData : 0;
     } else if (isTatKpi) {
       let sum = 0, count = 0;
       for (let i = 0; i <= currentMonth; i++) {
@@ -4280,22 +4352,32 @@
 
     const elapsedMonths = currentMonth + 1;
     let forecastYearly = 0, forecastPct = 0;
-    if (isPercentKpi || isTatKpi) {
+    if (isTatKpi) {
+      // TAT KPIs: forecast is the current average (lower = better)
       forecastYearly = yearlyActual;
       forecastPct = yearlyPct;
+    } else if (isPercentKpi) {
+      // % KPIs: project the average monthly % forward using elapsed months with actual data
+      // e.g. if avg adherence is 60% across 3 months, forecast for year = 60%
+      forecastYearly = yearlyActual; // already an average %, the best projection
+      forecastPct = kpi.yearlyPlan > 0 ? Math.min((forecastYearly / kpi.yearlyPlan) * 100, 100) : 0;
+      // If we have data for at least 1 month, scale optimistically: assume remaining months match avg
+      // forecastPct remains the average-based estimate
     } else if (elapsedMonths > 0 && yearlyActual > 0) {
       forecastYearly = (yearlyActual / elapsedMonths) * 12;
       forecastPct = (forecastYearly / kpi.yearlyPlan) * 100;
     }
 
+    const greenThreshold = kpi.greenThreshold !== undefined ? kpi.greenThreshold : 90;
+    const amberThreshold = kpi.amberThreshold !== undefined ? kpi.amberThreshold : 60;
     let status = "red";
     if (isTatKpi) {
       const idealDays = kpi.idealDays || 4;
       if (yearlyActual <= idealDays) status = "green";
       else if (yearlyActual <= idealDays * 2) status = "amber";
     } else {
-      if (yearlyPct >= 90) status = "green";
-      else if (yearlyPct >= 60) status = "amber";
+      if (yearlyPct >= greenThreshold) status = "green";
+      else if (yearlyPct >= amberThreshold) status = "amber";
     }
 
     return {
@@ -4307,7 +4389,7 @@
 
   function getEnrichedKpis() {
     let filtered = kpiData
-      .filter(k => k.id !== "partner_survey_score" && k.name !== "Partner Survey Score (A & A+)")
+      .filter(k => !isExcludedKpi(k))
       .map(k => ({ ...k, metrics: calculateMetrics(k) }));
     if (currentSearchTerm) {
       const term = currentSearchTerm.toLowerCase();
@@ -4415,8 +4497,9 @@
 
   function buildExecutiveNarrative(enriched) {
     if (!enriched.length) return "Portfolio narrative will appear here once KPI data is available.";
-    const avgAch = enriched.reduce((a,k)=>a+k.metrics.yearlyPct,0)/enriched.length;
-    const avgFcst = enriched.reduce((a,k)=>a+k.metrics.forecastPct,0)/enriched.length;
+    const _totalW = enriched.reduce((a,k)=>a+(k.weight||10),0) || 1;
+    const avgAch = enriched.reduce((a,k)=>a+k.metrics.yearlyPct*(k.weight||10),0)/_totalW;
+    const avgFcst = enriched.reduce((a,k)=>a+k.metrics.forecastPct*(k.weight||10),0)/_totalW;
     const redKpis = enriched.filter(k=>k.metrics.status === "red");
     const amberKpis = enriched.filter(k=>k.metrics.status === "amber");
     const greenKpis = enriched.filter(k=>k.metrics.status === "green");
@@ -4501,6 +4584,14 @@
     document.getElementById("stripActionInsight").innerHTML = `<i class="fas fa-bolt"></i><span><strong>${needingAction}</strong> KPI(s) require immediate action.</span>`;
     const best = enriched.slice().sort((a,b)=>b.metrics.yearlyPct - a.metrics.yearlyPct)[0];
     if (best) document.getElementById("stripTopPerformerInsight").innerHTML = `<i class="fas fa-trophy"></i><span>Top: <strong>${esc(best.name)}</strong> at ${fmt(best.metrics.yearlyPct)}%.</span>`;
+  }
+
+  // ========== SLA COUNTDOWN HELPER ==========
+  function daysToMonthEnd() {
+    const now = new Date();
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const diff = Math.ceil((lastDay - now) / (1000 * 60 * 60 * 24));
+    return Math.max(0, diff);
   }
 
   // ========== KPI CATEGORY & TILES RENDER ==========
@@ -4596,6 +4687,7 @@
           <div class="variance-text">
             Gap <strong>${fmt(m.gap)}</strong><br>
             <span>${m.forecastPct < 85 ? "HIGH RISK" : m.forecastPct < 95 ? "WATCHLIST" : "ON TRACK"}</span>
+            ${(m.status === 'red' || m.status === 'amber') && daysToMonthEnd() <= 10 ? `<span class="sla-countdown"><i class="fas fa-clock"></i> ${daysToMonthEnd()}d left</span>` : ''}
           </div>
         </div>
       </div>`;
@@ -4615,7 +4707,7 @@
         const values = Object.values(kpi.monthlyActuals || {});
         new Chart(ctx, {
           type: "line",
-          data: { labels: FY_MONTHS.slice(0, currentMonth + 1), datasets: [{ data: values.slice(0, currentMonth + 1), borderColor: "var(--primary)", borderWidth: 2, pointRadius: 0, tension: 0.3 }] },
+          data: { labels: FY_MONTHS.slice(0, currentMonth + 1), datasets: [{ data: values.slice(0, currentMonth + 1), borderColor: getChartTheme().primary, borderWidth: 2, pointRadius: 0, tension: 0.3 }] },
           options: { responsive: false, plugins: { legend: { display: false }, tooltip: { enabled: false } }, scales: { x: { display: false }, y: { display: false } } }
         });
       }
@@ -4691,9 +4783,11 @@
       generateExecutiveInsights(enriched);
       return;
     }
-    const avgAch = enriched.reduce((a,k)=>a+k.metrics.yearlyPct,0)/enriched.length;
+    // Weighted portfolio scoring (feature 2)
+    const totalWeight = enriched.reduce((a,k)=>a+(k.weight||10),0) || 1;
+    const avgAch = enriched.reduce((a,k)=>a+k.metrics.yearlyPct*(k.weight||10),0)/totalWeight;
     const avgGap = enriched.reduce((a,k)=>a+k.metrics.gap,0)/enriched.length;
-    const avgFcst = enriched.reduce((a,k)=>a+k.metrics.forecastPct,0)/enriched.length;
+    const avgFcst = enriched.reduce((a,k)=>a+k.metrics.forecastPct*(k.weight||10),0)/totalWeight;
     const green = enriched.filter(k => k.metrics.status === "green").length;
     const amber = enriched.filter(k => k.metrics.status === "amber").length;
     const red = enriched.filter(k => k.metrics.status === "red").length;
@@ -4704,7 +4798,23 @@
     generateExecutiveInsights(enriched);
   }
 
+  function getChartTheme() {
+    const dark = document.documentElement.getAttribute('data-theme') !== 'light';
+    return {
+      text:       dark ? '#9ca3af' : '#374151',
+      textBright: dark ? '#e5e7eb' : '#0d1526',
+      grid:       dark ? '#1f2937' : '#c8cdd8',
+      surface:    dark ? '#0f172a' : '#ffffff',
+      primary:    dark ? '#60a5fa' : '#2563eb',
+      success:    dark ? '#22c55e' : '#16a34a',
+      warning:    dark ? '#fbbf24' : '#d97706',
+      danger:     dark ? '#fb7185' : '#dc2626',
+      line:       dark ? '#374151' : '#bdc3d4'
+    };
+  }
+
   function renderCharts() {
+    const CT = getChartTheme();
     const enriched = getEnrichedKpis();
     const barCanvas = document.getElementById("barPlanActualChart");
     const horizCanvas = document.getElementById("horizontalAchievementChart");
@@ -4720,38 +4830,51 @@
     Chart.defaults.font.family = "'Inter', sans-serif";
 
     if (barCanvas) {
-      if (barChart) barChart.destroy();
+      if (barChart) { barChart.destroy(); barChart = null; }
+      const monthlyPlanData = enriched.map(k => k.yearlyPlan / 12);
+      const monthlyActualData = enriched.map(k => parseFloat((k.monthlyActuals || {})[currentMonth] || 0));
       barChart = new Chart(barCanvas.getContext("2d"), {
-        type:"line", data:{ labels, datasets:[
-          { label:"Yearly Plan", data: enriched.map(k=>k.yearlyPlan), borderColor:"var(--line-strong)", backgroundColor:"rgba(148,163,184,0.12)", tension:0.35, pointRadius:0 },
-          { label:"Yearly Actual", data: enriched.map(k=>k.metrics.yearlyActual), borderColor:"var(--primary)", backgroundColor:"rgba(96,165,250,0.22)", tension:0.35, pointRadius:2.5 },
-          { label:"Forecast (FY)", data: enriched.map(k=>k.metrics.forecastYearly), borderColor:"var(--success)", borderDash:[4,4], tension:0.35, pointRadius:0 }
-        ]}, options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{ labels:{ color:"var(--text-muted)" } } }, scales:{ x:{ ticks:{ color:"var(--text-muted)" }, grid:{ display:false } }, y:{ ticks:{ color:"var(--text-muted)" }, grid:{ color:"var(--line)" } } } }
+        type:"bar", data:{ labels, datasets:[
+          { label:"Monthly Plan", data: monthlyPlanData, backgroundColor:"rgba(148,163,184,0.55)", borderRadius:4, borderSkipped:false },
+          { label:"Monthly Actual", data: monthlyActualData, backgroundColor: enriched.map(k => { const a=parseFloat((k.monthlyActuals||{})[currentMonth]||0); const p=k.yearlyPlan/12; const pct=p>0?a/p*100:0; return pct>=90?"#22c55e":pct>=60?"#f97316":"#ef4444"; }), borderRadius:4, borderSkipped:false }
+        ]}, options:{ responsive:true, maintainAspectRatio:false,
+          plugins:{
+            legend:{ labels:{ color:CT.text } },
+            title:{ display:true, text:"Current Month: Monthly Plan vs Actual", color:CT.text, font:{ size:13, weight:'600' } },
+            datalabels: { display: function(ctx) { return ctx && ctx.parsed && ctx.parsed.y > 0; }, color: CT.textBright, font: { size:9, weight:'700' }, formatter: function(v) { return v > 0 ? fmt(v) : ''; }, anchor:'end', align:'top', clamp:true }
+          },
+          scales:{ x:{ ticks:{ color:CT.text }, grid:{ display:false } }, y:{ ticks:{ color:CT.text }, grid:{ color:CT.grid } } }
+        }
       });
     }
 
     if (horizCanvas) {
-      if (horizChart) horizChart.destroy();
+      if (horizChart) { horizChart.destroy(); horizChart = null; }
       horizChart = new Chart(horizCanvas.getContext("2d"), {
         type:"bar", data:{ labels, datasets:[{ label:"Achievement %", data: enriched.map(k=>k.metrics.yearlyPct), backgroundColor: enriched.map(k => k.metrics.status === "green" ? "#22c55e" : k.metrics.status === "amber" ? "#f97316" : "#ef4444") }] },
-        options:{ indexAxis:"y", responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:"var(--text-muted)" }, grid:{ color:"var(--line)" } }, y:{ ticks:{ color:"var(--text-muted)" }, grid:{ display:false } } } }
+        options:{ indexAxis:"y", responsive:true, maintainAspectRatio:false, plugins:{ legend:{ display:false } }, scales:{ x:{ ticks:{ color:CT.text }, grid:{ color:CT.grid } }, y:{ ticks:{ color:CT.text }, grid:{ display:false } } } }
       });
     }
 
     if (varianceCanvas) {
-      if (varianceChart) varianceChart.destroy();
+      if (varianceChart) { varianceChart.destroy(); varianceChart = null; }
       const catKeys = ["sales","operations","quality","finance"];
       const catLabels = ["Sales","Operations","Quality","Finance"];
-      const catAch = catKeys.map(cat => { const list = enriched.filter(k => (k.category||"") === cat); return list.length ? list.reduce((a,k)=>a+k.metrics.yearlyPct,0)/list.length : 0; });
-      varianceChart = new Chart(varianceCanvas.getContext("2d"), { type:"radar", data:{ labels:catLabels, datasets:[{ label:"Achievement %", data:catAch, borderColor:"var(--primary)", backgroundColor:"rgba(96,165,250,0.18)" }] }, options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ r:{ angleLines:{ color:"var(--line)" }, grid:{ color:"var(--line)" }, ticks:{ display:false }, pointLabels:{ color:"var(--text-muted)" } } } } });
+      const catAch = catKeys.map(cat => { const list = enriched.filter(k => (k.category||"").toLowerCase() === cat.toLowerCase()); return list.length ? list.reduce((a,k)=>a+k.metrics.yearlyPct,0)/list.length : 0; });
+      varianceChart = new Chart(varianceCanvas.getContext("2d"), { type:"radar", data:{ labels:catLabels, datasets:[{ label:"Achievement %", data:catAch, borderColor:CT.primary, backgroundColor:"rgba(96,165,250,0.18)" }] }, options:{ responsive:true, plugins:{ legend:{ display:false },
+        datalabels: { display: function(ctx) { return ctx && ctx.dataset && (ctx.dataset.data[ctx.dataIndex]||0) > 0; }, color: CT.primary, font: { size:9, weight:'700' }, formatter: function(v) { return v > 0 ? fmt(v)+'%' : ''; } }
+      }, scales:{ r:{ angleLines:{ color:CT.grid }, grid:{ color:CT.grid }, ticks:{ display:false }, pointLabels:{ color:CT.text } } } } });
     }
 
     if (mixCanvas) {
-      if (mixChart) mixChart.destroy();
+      if (mixChart) { mixChart.destroy(); mixChart = null; }
       const redCount = enriched.filter(k=>k.metrics.status==="red").length;
       const amberCount = enriched.filter(k=>k.metrics.status==="amber").length;
       const greenCount = enriched.filter(k=>k.metrics.status==="green").length;
-      mixChart = new Chart(mixCanvas.getContext("2d"), { type:"doughnut", data:{ labels:["Green","Amber","Red"], datasets:[{ data:[greenCount, amberCount, redCount], backgroundColor:["#22c55e","#f97316","#ef4444"] }] }, options:{ cutout:"60%", plugins:{ legend:{ position:"bottom", labels:{ color:"var(--text-muted)" } } } } });
+      const _total = greenCount + amberCount + redCount || 1;
+      mixChart = new Chart(mixCanvas.getContext("2d"), { type:"doughnut", data:{ labels:["Green","Amber","Red"], datasets:[{ data:[greenCount, amberCount, redCount], backgroundColor:["#22c55e","#f97316","#ef4444"] }] }, options:{ cutout:"60%", plugins:{ legend:{ position:"bottom", labels:{ color:CT.text } },
+        datalabels: { display: function(ctx) { return ctx && ctx.dataset && (ctx.dataset.data[ctx.dataIndex]||0) > 0; }, color: '#fff', font: { size:10, weight:'700' }, formatter: function(v, ctx) { const t = (ctx && ctx.dataset && ctx.dataset.data ? ctx.dataset.data.reduce(function(a,b){return a+b;},0) : 1) || 1; return v > 0 ? v+' ('+fmt(v/t*100)+'%)' : ''; } }
+      } } });
     }
 
     const heatContainer = document.getElementById("heatmapContainer");
@@ -4780,6 +4903,7 @@
 
   // ========== PHASE 3: ANALYTICS EXTENSIONS ==========
   function renderAnalyticsExtras() {
+    const CT = getChartTheme();
     const enriched = getEnrichedKpis();
     if (!enriched.length) return;
     const { byCategory, contrib, totalGap } = computeCategoryContribution(enriched);
@@ -4807,16 +4931,18 @@
 
     const ownerCanvas = document.getElementById('ownerAchievementChart');
     if (ownerCanvas) {
-      if (ownerChart) ownerChart.destroy();
+      if (ownerChart) { ownerChart.destroy(); ownerChart = null; }
       ownerChart = new Chart(ownerCanvas.getContext('2d'), {
         type:'bar',
         data:{ labels:ownerLabels, datasets:[{ label:'Avg Achievement %', data:ownerAvgs, backgroundColor:ownerColors, borderRadius:6, borderSkipped:false }] },
         options:{
           indexAxis:'y', responsive:true, maintainAspectRatio:false,
-          plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: ctx => ` ${fmt(ctx.parsed.x)}%` } } },
+          plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: ctx => ` ${fmt(ctx.parsed.x)}%` } },
+            datalabels: { display: function(ctx) { return ctx && ctx.parsed && ctx.parsed.x > 0; }, color: '#fff', font: { size:9, weight:'700' }, formatter: function(v) { return v > 0 ? fmt(v)+'%' : ''; }, anchor:'end', align:'end', clamp:true }
+          },
           scales:{
-            x:{ min:0, max:100, ticks:{ color:'var(--text-muted)', callback: v => v+'%' }, grid:{ color:'var(--line)' } },
-            y:{ ticks:{ color:'var(--text-muted)' }, grid:{ display:false } }
+            x:{ min:0, max:100, ticks:{ color:CT.text, callback: v => v+'%' }, grid:{ color:CT.grid } },
+            y:{ ticks:{ color:CT.text }, grid:{ display:false } }
           }
         }
       });
@@ -4830,16 +4956,18 @@
 
     const catGapCanvas = document.getElementById('categoryGapChart');
     if (catGapCanvas) {
-      if (categoryGapChart) categoryGapChart.destroy();
+      if (categoryGapChart) { categoryGapChart.destroy(); categoryGapChart = null; }
       categoryGapChart = new Chart(catGapCanvas.getContext('2d'), {
         type:'bar',
         data:{ labels:catLabels, datasets:[{ label:'Gap vs Plan', data:catGapVals, backgroundColor:catColors, borderRadius:6, borderSkipped:false }] },
         options:{
           responsive:true, maintainAspectRatio:false,
-          plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: ctx => ` Gap: ${fmt(ctx.parsed.y)}` } } },
+          plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label: ctx => ` Gap: ${fmt(ctx.parsed.y)}` } },
+            datalabels: { display: function(ctx) { return ctx && ctx.parsed && ctx.parsed.y > 0; }, color: '#fff', font: { size:9, weight:'700' }, formatter: function(v) { return v > 0 ? fmt(v) : ''; }, anchor:'end', align:'top', clamp:true }
+          },
           scales:{
-            x:{ ticks:{ color:'var(--text-muted)' }, grid:{ display:false } },
-            y:{ ticks:{ color:'var(--text-muted)' }, grid:{ color:'var(--line)' } }
+            x:{ ticks:{ color:CT.text }, grid:{ display:false } },
+            y:{ ticks:{ color:CT.text }, grid:{ color:CT.grid } }
           }
         }
       });
@@ -4894,6 +5022,7 @@
   ];
 
   function renderPrimaryKpisChart() {
+    const CT = getChartTheme();
     const canvas = document.getElementById('primaryKpisChart');
     if (!canvas) return;
 
@@ -4926,7 +5055,7 @@
       };
     });
 
-    if (primaryKpisChart) primaryKpisChart.destroy();
+    if (primaryKpisChart) { primaryKpisChart.destroy(); primaryKpisChart = null; }
     Chart.defaults.font.family = "'Inter', sans-serif";
 
     primaryKpisChart = new Chart(canvas.getContext('2d'), {
@@ -4943,13 +5072,14 @@
           legend: {
             display: true,
             position: 'bottom',
-            labels: { color: 'var(--text-muted)', boxWidth: 12, padding: 14, font: { size: 11 } }
+            labels: { color: CT.text, boxWidth: 12, padding: 14, font: { size: 11 } }
           },
-          tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } }
+          tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } },
+          datalabels: { display: function(ctx) { return ctx && ctx.parsed && ctx.dataIndex === visibleMonths.length - 1 && ctx.parsed.y > 0; }, color: function(ctx) { return PRIMARY_KPI_COLORS[ctx.datasetIndex % PRIMARY_KPI_COLORS.length]; }, font: { size:8, weight:'700' }, formatter: function(v) { return v > 0 ? fmt(v) : ''; }, anchor:'end', align:'top' }
         },
         scales: {
-          x: { ticks: { color: 'var(--text-muted)', font: { size: 11 } }, grid: { color: 'var(--line)', display: true } },
-          y: { ticks: { color: 'var(--text-muted)', font: { size: 11 } }, grid: { color: 'var(--line)' } }
+          x: { ticks: { color: CT.text, font: { size: 11 } }, grid: { color: CT.grid, display: true } },
+          y: { ticks: { color: CT.text, font: { size: 11 } }, grid: { color: CT.grid } }
         }
       }
     });
@@ -4988,7 +5118,7 @@
     kpi.yearlyPlan = num;
     renderAll();
     try {
-      await updateDoc(doc(db,"kpis",kpiId), { yearlyPlan:num, lastUpdated:serverTimestamp(), updatedBy:currentUserEmail });
+      await updateDoc(doc(db,"kpis",kpiId), { yearlyPlan:num, lastUpdated:serverTimestamp(), updatedBy:currentUserEmail||'system', updatedAt:serverTimestamp() });
       await logAudit(kpiId, kpi.name, "yearly_plan", oldValue, num);
       showToast(`${kpi.name} updated`,"success");
     } catch (e) { kpi.yearlyPlan = oldValue; renderAll(); showToast("Update failed","error"); }
@@ -5004,7 +5134,7 @@
     kpi.monthlyActuals = { ...oldMonthlyActuals, [monthIndex]:num };
     renderAll();
     try {
-      await updateDoc(doc(db,"kpis",kpiId), { monthlyActuals:kpi.monthlyActuals, lastUpdated:serverTimestamp(), updatedBy:currentUserEmail });
+      await updateDoc(doc(db,"kpis",kpiId), { monthlyActuals:kpi.monthlyActuals, lastUpdated:serverTimestamp(), updatedBy:currentUserEmail||'system', updatedAt:serverTimestamp() });
       await logAudit(kpiId, kpi.name, `monthly_${FY_MONTHS[monthIndex]}`, oldMonthlyActuals[monthIndex]||0, num);
       showToast(`${kpi.name} updated`,"success");
     } catch (e) { kpi.monthlyActuals = oldMonthlyActuals; renderAll(); showToast("Update failed","error"); }
@@ -5248,7 +5378,8 @@
     if (el('healthFyLabel'))      el('healthFyLabel').textContent      = getFYLabel();
 
     if (enriched.length) {
-      const avgAch = enriched.reduce((a,k)=>a+k.metrics.yearlyPct,0)/enriched.length;
+      const _hw = enriched.reduce((a,k)=>a+(k.weight||10),0) || 1;
+      const avgAch = enriched.reduce((a,k)=>a+k.metrics.yearlyPct*(k.weight||10),0)/_hw;
       const green  = enriched.filter(k=>k.metrics.status==='green').length;
       const amber  = enriched.filter(k=>k.metrics.status==='amber').length;
       const red    = enriched.filter(k=>k.metrics.status==='red').length;
@@ -5291,25 +5422,46 @@
     if (healthTickerInterval) { clearInterval(healthTickerInterval); healthTickerInterval = null; }
   }
 
+  function showRenderError(err) {
+    const existingBanner = document.getElementById('renderErrorBanner');
+    if (existingBanner) existingBanner.remove();
+    const banner = document.createElement('div');
+    banner.id = 'renderErrorBanner';
+    banner.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:9999;background:#ef4444;color:#fff;padding:10px 20px;border-radius:10px;font-size:0.82rem;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,0.3);cursor:pointer;';
+    banner.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Render error: ${err.message || 'Unknown error'}. Click to dismiss.`;
+    banner.onclick = () => banner.remove();
+    document.body.appendChild(banner);
+    setTimeout(() => { if (banner.parentNode) banner.remove(); }, 8000);
+  }
+
   function renderAll() {
-    const enriched = getEnrichedKpis();
-    // IMP 6: pre-compute anomaly set before tiles render so markers can be applied
-    detectAnomalies(enriched);
-    renderCategorySections();
-    renderTable();
-    renderSummaryBar();
-    renderCharts();
-    // PHASE 3: update analytics extras whenever data changes
-    renderAnalyticsExtras();
-    // PHASE 5: keep system health in sync
-    renderSystemHealth();
-    // FIX 5: primary KPIs chart (only if analytics tab is visible to avoid layout issues)
-    if (document.getElementById('analyticsView')?.style.display !== 'none') {
-      renderPrimaryKpisChart();
+    try {
+      const enriched = getEnrichedKpis();
+      // IMP 6: pre-compute anomaly set before tiles render so markers can be applied
+      detectAnomalies(enriched);
+      renderCategorySections();
+      renderTable();
+      renderSummaryBar();
+      // All Chart.js canvases live inside analyticsView, never dashboardView.
+      // Only render them when analytics is actually visible so Chart.js can
+      // measure real pixel dimensions. switchView() handles the initial render
+      // when the user first opens the analytics tab.
+      const analyticsVisible = document.getElementById('analyticsView')?.style.display !== 'none';
+      if (analyticsVisible) {
+        renderCharts();
+        renderAnalyticsExtras();
+        renderPrimaryKpisChart();
+      }
+      // PHASE 5: keep system health in sync
+      renderSystemHealth();
+    } catch(err) {
+      console.error('renderAll failed:', err);
+      showRenderError(err);
     }
   }
 
   function openKpiDetailModal(kpiId) {
+    const CT = getChartTheme();
     currentModalKpiId = kpiId;
     const kpi = kpiData.find(k => k.id === kpiId);
     const modal = document.getElementById("kpiModal");
@@ -5321,7 +5473,7 @@
     const ctx = document.getElementById("trendChartCanvas")?.getContext("2d");
     if (ctx) {
       if (trendChartInstance) trendChartInstance.destroy();
-      trendChartInstance = new Chart(ctx, { type:"line", data:{ labels:FY_MONTHS, datasets:[{ label:"Monthly Actual", data:FY_MONTHS.map((_,i)=>monthlyActuals[i]||0), borderColor:"var(--primary)", backgroundColor:"rgba(96,165,250,0.18)", tension:0.35 }] }, options:{ responsive:true, plugins:{ legend:{ display:false } } } });
+      trendChartInstance = new Chart(ctx, { type:"line", data:{ labels:FY_MONTHS, datasets:[{ label:"Monthly Actual", data:FY_MONTHS.map((_,i)=>monthlyActuals[i]||0), borderColor:CT.primary, backgroundColor:"rgba(96,165,250,0.18)", tension:0.35 }] }, options:{ responsive:true, plugins:{ legend:{ display:false } } } });
     }
     // PHASE 8: load comment history
     loadModalComments(kpiId);
@@ -5383,7 +5535,7 @@
       const text = document.getElementById('inlineCommentText')?.value.trim();
       if (!text) return;
       try {
-        await addDoc(collection(db,'kpi_comments'), { kpiId, month:currentMonth, text, userEmail:currentUserEmail, userId:currentUserId, timestamp:serverTimestamp() });
+        await addDoc(collection(db,'kpi_comments'), { kpiId, month:currentMonth, text, userEmail:currentUserEmail, userId:currentUserId, timestamp:serverTimestamp(), createdBy:currentUserEmail||'system', createdAt:serverTimestamp() });
         showToast('Comment added','success');
         loadModalComments(kpiId);
       } catch(e) { showToast('Failed','error'); }
@@ -5403,7 +5555,7 @@
 
   function populateKpiFilter() {
     const sel = document.getElementById("kpiSelectFilter");
-    sel.innerHTML = `<option value="all">All KPIs</option>` + kpiData.filter(k => k.id !== "partner_survey_score").map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join("");
+    sel.innerHTML = `<option value="all">All KPIs</option>` + kpiData.filter(k => !isExcludedKpi(k)).map(k => `<option value="${k.id}">${esc(k.name)}</option>`).join("");
   }
 
   function initKpiListener() {
@@ -5420,11 +5572,12 @@
           const newDoc = { id:def.id, name:def.name, yearlyPlan:def.yearlyPlan, unit:def.unit, monthlyActuals:buildEmptyMonthlyActuals(), owner:def.owner, ownerEmail:def.ownerEmail, category:def.category, lastUpdated:serverTimestamp() };
           if (def.isTat) newDoc.isTat = true;
           if (def.idealDays) newDoc.idealDays = def.idealDays;
+          newDoc.createdBy = 'system'; newDoc.createdAt = serverTimestamp(); newDoc.updatedBy = 'system'; newDoc.updatedAt = serverTimestamp();
           try { await setDoc(doc(db,"kpis",def.id), newDoc); } catch(e) {}
           fetched.push({ ...newDoc });
         }
       }
-      kpiData = fetched.filter(k => k.id !== "partner_survey_score").sort((a,b) => KPI_DEFINITIONS.findIndex(d => d.id === a.id) - KPI_DEFINITIONS.findIndex(d => d.id === b.id));
+      kpiData = fetched.filter(k => !isExcludedKpi(k)).sort((a,b) => KPI_DEFINITIONS.findIndex(d => d.id === a.id) - KPI_DEFINITIONS.findIndex(d => d.id === b.id));
       // PHASE 2: hide skeletons after first data load
       if (kpiFirstLoad) {
         kpiFirstLoad = false;
@@ -5525,21 +5678,30 @@
     renderNotifPanel();
   }
 
+  const NOTIF_STORAGE_KEY = 'kpi_notifications_v1';
   function saveNotifications() {
-    try { localStorage.setItem('kpiNotifications', JSON.stringify(notifications)); } catch(e) {}
+    try {
+      // Keep only last 50, convert non-serializable fields
+      const toSave = notifications.slice(0, 50).map(n => ({
+        id: n.id, type: n.type, title: n.title, time: n.time, read: n.read
+      }));
+      localStorage.setItem(NOTIF_STORAGE_KEY, JSON.stringify(toSave));
+    } catch(e) { /* localStorage unavailable */ }
   }
-
   function loadNotifications() {
     try {
-      const raw = JSON.parse(localStorage.getItem('kpiNotifications') || '[]');
+      const raw = localStorage.getItem(NOTIF_STORAGE_KEY);
+      if (!raw) { notifications = []; return; }
+      const parsed = JSON.parse(raw);
       const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000; // 7 days
-      notifications = raw
-        .filter(n => new Date(n.time).getTime() > cutoff)
-        .map(n => ({ ...n, time: n.time })); // keep ISO string
+      notifications = parsed
+        .filter(n => n && n.time && new Date(n.time).getTime() > cutoff)
+        .slice(0, 50);
     } catch(e) { notifications = []; }
   }
 
   function renderNotifPanel() {
+    const CT = getChartTheme();
     const badge = document.getElementById('notifBadge');
     const list  = document.getElementById('notifList');
     if (!badge || !list) return;
@@ -5548,11 +5710,11 @@
     badge.classList.toggle('has-notifs', unread > 0);
     if (!notifications.length) { list.innerHTML = '<div class="notif-empty">No notifications yet.</div>'; return; }
     const icons = { red:'fa-exclamation-triangle', risk:'fa-fire', comment:'fa-comment-dots' };
-    const colors = { red:'var(--danger)', risk:'var(--warning)', comment:'var(--primary)' };
+    const colors = { red:CT.danger, risk:CT.warning, comment:CT.primary };
     list.innerHTML = notifications.map(n => {
       const timeStr = n.time ? new Date(n.time).toLocaleTimeString() : '';
       return `<div class="notif-item ${n.read?'':'unread'}" data-nid="${n.id}">
-        <div class="notif-item-icon" style="color:${colors[n.type]||'var(--primary)'}"><i class="fas ${icons[n.type]||'fa-bell'}"></i></div>
+        <div class="notif-item-icon" style="color:${colors[n.type]||CT.primary}"><i class="fas ${icons[n.type]||'fa-bell'}"></i></div>
         <div class="notif-item-body">
           <div class="notif-item-title">${esc(n.title)}</div>
           <div class="notif-item-time">${esc(n.kpiName||'')} · ${timeStr}</div>
@@ -5622,6 +5784,8 @@
   // ========== PHASE 10: ANOMALY DETECTION ==========
   
   // ========== PHASE 10: WHAT-IF PLANNER ==========
+  // whatIfAdjustments is module-level so it persists across view switches.
+  // Values are only reset when the user explicitly clicks the Reset button.
   let whatIfAdjustments = {};
 
   function renderWhatIf() {
@@ -5706,7 +5870,7 @@
       if (snap.empty) {
         // Seed defaults
         for (const cat of DEFAULT_CATEGORIES) {
-          try { await setDoc(doc(db, 'categories', cat.id), cat); } catch(e) {}
+          try { await setDoc(doc(db, 'categories', cat.id), { ...cat, createdBy:'system', createdAt:serverTimestamp(), updatedBy:'system', updatedAt:serverTimestamp() }); } catch(e) {}
         }
         categoriesData = [...DEFAULT_CATEGORIES];
       } else {
@@ -5752,7 +5916,7 @@
       showToast(`Category "${name}" already exists`, 'error'); return;
     }
     try {
-      await setDoc(doc(db, 'categories', id), { id, name, color });
+      await setDoc(doc(db, 'categories', id), { id, name, color, createdBy: currentUserEmail||'system', createdAt: serverTimestamp(), updatedBy: currentUserEmail||'system', updatedAt: serverTimestamp() });
       document.getElementById('configNewCatName').value = '';
       showToast(`Category "${name}" added`, 'success');
     } catch(e) {
@@ -5833,7 +5997,7 @@
     const kpi = kpiData.find(k => k.id === kpiId);
     if (!kpi) return;
     try {
-      const updateData = { [fyKey]: { ...histInputValues }, lastUpdated: serverTimestamp(), updatedBy: currentUserEmail };
+      const updateData = { [fyKey]: { ...histInputValues }, lastUpdated: serverTimestamp(), updatedBy: currentUserEmail||'system', updatedAt: serverTimestamp() };
       await updateDoc(doc(db, 'kpis', kpiId), updateData);
       await logAudit(kpiId, kpi.name, fyKey, '—', 'historical data saved');
       showToast('Historical data saved', 'success');
@@ -5879,7 +6043,7 @@
       return `<div class="config-kpi-row">
         <div class="config-kpi-info">
           <div class="config-kpi-name">${esc(k.name)}</div>
-          <div class="config-kpi-meta">${esc(k.category)} · ${esc(k.owner||'—')} · Plan: ${fmt(k.yearlyPlan)} ${esc(k.unit||'')} · ${typeLabel}</div>
+          <div class="config-kpi-meta">${esc(k.category)} · ${esc(k.owner||'—')} · Plan: ${fmt(k.yearlyPlan)} ${esc(k.unit||'')} · ${typeLabel} · Wt: ${k.weight||10} · 🟢≥${k.greenThreshold||90}% · 🟡≥${k.amberThreshold||60}%</div>
         </div>
         <div class="config-kpi-actions">
           <button class="icon-chip config-edit-btn" data-id="${k.id}" title="Edit"><i class="fas fa-pencil-alt"></i></button>
@@ -5926,6 +6090,9 @@
     document.getElementById('configKpiType').value = type;
     document.getElementById('configKpiIdealDays').value = kpi.idealDays || 4;
     document.getElementById('idealDaysField').style.display = type === 'tat' ? '' : 'none';
+    document.getElementById('configKpiWeight').value = kpi.weight !== undefined ? kpi.weight : 10;
+    document.getElementById('configKpiGreenThreshold').value = kpi.greenThreshold !== undefined ? kpi.greenThreshold : 90;
+    document.getElementById('configKpiAmberThreshold').value = kpi.amberThreshold !== undefined ? kpi.amberThreshold : 60;
     document.getElementById('configFormTitle').innerHTML = '<i class="fas fa-pencil-alt" style="color:var(--warning);margin-right:6px;font-size:0.84rem;"></i> Edit KPI';
     document.getElementById('configSaveKpiBtn').innerHTML = '<i class="fas fa-save"></i> Update KPI';
   }
@@ -5941,6 +6108,9 @@
     document.getElementById('configKpiType').value = 'standard';
     document.getElementById('configKpiIdealDays').value = '4';
     document.getElementById('idealDaysField').style.display = 'none';
+    document.getElementById('configKpiWeight').value = '10';
+    document.getElementById('configKpiGreenThreshold').value = '90';
+    document.getElementById('configKpiAmberThreshold').value = '60';
     document.getElementById('configFormTitle').innerHTML = '<i class="fas fa-plus-circle" style="color:var(--primary);margin-right:6px;font-size:0.84rem;"></i> Add New KPI';
     document.getElementById('configSaveKpiBtn').innerHTML = '<i class="fas fa-save"></i> Save KPI';
   }
@@ -5960,11 +6130,18 @@
     if (!name) { showToast('KPI name is required', 'error'); return; }
     if (!owner) { showToast('Owner is required', 'error'); return; }
 
+    const kpiWeight = parseInt(document.getElementById('configKpiWeight')?.value) || 10;
+    const greenThreshold = parseInt(document.getElementById('configKpiGreenThreshold')?.value) || 90;
+    const amberThreshold = parseInt(document.getElementById('configKpiAmberThreshold')?.value) || 60;
     const docData = {
       name, category, owner, ownerEmail, yearlyPlan, unit,
       isTat: kpiType === 'tat',
+      weight: kpiWeight,
+      greenThreshold,
+      amberThreshold,
       lastUpdated: serverTimestamp(),
-      updatedBy: currentUserEmail
+      updatedBy: currentUserEmail||'system',
+      updatedAt: serverTimestamp()
     };
     if (kpiType === 'tat') docData.idealDays = idealDays;
     if (!editingId) docData.monthlyActuals = buildEmptyMonthlyActuals();
@@ -5976,7 +6153,7 @@
         showToast(`${name} updated`, 'success');
       } else {
         const newId = name.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'').slice(0,40) + '_' + Date.now().toString(36);
-        await setDoc(doc(db, 'kpis', newId), { ...docData, id: newId });
+        await setDoc(doc(db, 'kpis', newId), { ...docData, id: newId, createdBy: currentUserEmail||'system', createdAt: serverTimestamp() });
         await logAudit(newId, name, 'config_add', '—', 'created');
         showToast(`${name} added`, 'success');
       }
@@ -6055,7 +6232,7 @@
 
   // ========== IMP 5: COMPACT VIEW TOGGLE ==========
   let isCompactView = (() => {
-    try { return localStorage.getItem('kpiCompactView') === 'true'; } catch(e) { return false; }
+    return typeof _compactViewMem !== 'undefined' ? _compactViewMem : false;
   })();
 
   function applyCompactView() {
@@ -6071,7 +6248,7 @@
 
   function toggleCompactView() {
     isCompactView = !isCompactView;
-    try { localStorage.setItem('kpiCompactView', isCompactView); } catch(e) {}
+    _compactViewMem = isCompactView;
     applyCompactView();
   }
 
@@ -6180,7 +6357,7 @@
       if (!kpi) return;
       const newActuals = { ...(kpi.monthlyActuals || buildEmptyMonthlyActuals()), [monthIdx]: val };
       updates.push(
-        updateDoc(doc(db, 'kpis', kpiId), { monthlyActuals: newActuals, lastUpdated: serverTimestamp(), updatedBy: currentUserEmail })
+        updateDoc(doc(db, 'kpis', kpiId), { monthlyActuals: newActuals, lastUpdated: serverTimestamp(), updatedBy: currentUserEmail||'system', updatedAt: serverTimestamp() })
           .then(() => logAudit(kpiId, kpi.name, `bulk_monthly_${FY_MONTHS[monthIdx]}`, kpi.monthlyActuals?.[monthIdx]||0, val))
       );
     });
@@ -6207,7 +6384,23 @@
     document.getElementById("kpiSearchInput").addEventListener("input", e => { currentSearchTerm = e.target.value; renderAll(); });
     document.getElementById("sortTableSelect").addEventListener("change", e => { currentSort = e.target.value; renderTable(); });
     document.getElementById("kpiSelectFilter").addEventListener("change", e => { currentKpiFilter = e.target.value; renderTable(); });
-    document.getElementById("themeToggleBtn").addEventListener("click", () => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light"; renderCharts(); });
+    // Safety timeout: force-hide skeletons after 8s regardless of Firestore state
+    setTimeout(function() {
+      if (!document.body.getAttribute('data-loaded')) {
+        hideSkeletons();
+        console.warn('KPI Platform: skeleton safety timeout triggered after 8s');
+      }
+    }, 8000);
+
+    document.getElementById("themeToggleBtn").addEventListener("click", () => {
+      document.documentElement.dataset.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+      const analyticsVisible = document.getElementById('analyticsView')?.style.display !== 'none';
+      if (analyticsVisible) {
+        requestAnimationFrame(function() { setTimeout(function() { renderCharts(); renderAnalyticsExtras(); }, 50); });
+      } else {
+        renderCharts();
+      }
+    });
     document.getElementById("closeModalBtn").addEventListener("click", () => document.getElementById("kpiModal").classList.remove("active"));
     document.getElementById("closeCommentModal").addEventListener("click", () => document.getElementById("commentModal").classList.remove("active"));
     document.getElementById("cancelCommentBtn").addEventListener("click", () => document.getElementById("commentModal").classList.remove("active"));
@@ -6225,7 +6418,7 @@
       const text = document.getElementById("commentText").value.trim();
       if (!text) return;
       try {
-        await addDoc(collection(db, "kpi_comments"), { kpiId: currentModalKpiId, month: currentCommentMonth, text, userEmail: currentUserEmail, userId: currentUserId, timestamp: serverTimestamp() });
+        await addDoc(collection(db, "kpi_comments"), { kpiId: currentModalKpiId, month: currentCommentMonth, text, userEmail: currentUserEmail, userId: currentUserId, timestamp: serverTimestamp(), createdBy: currentUserEmail||'system', createdAt: serverTimestamp() });
         showToast("Comment added","success");
         document.getElementById("commentModal").classList.remove("active");
       } catch(e) { showToast("Failed","error"); }
@@ -6314,14 +6507,24 @@
     if (!navigator.onLine) showOfflineBanner();
 
     // PHASE 3: PNG download handlers for chart buttons
-    function downloadChartAsPng(canvasId, filename) {
+    function downloadCanvasPNG(canvasId, filename) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) { showToast('Chart not available','error'); return; }
+      const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+      const bgColor = isDark ? '#0f172a' : '#ffffff';
+      const offscreen = document.createElement('canvas');
+      offscreen.width = canvas.width;
+      offscreen.height = canvas.height;
+      const ctx = offscreen.getContext('2d');
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, offscreen.width, offscreen.height);
+      ctx.drawImage(canvas, 0, 0);
       const link = document.createElement('a');
       link.download = filename + '.png';
-      link.href = canvas.toDataURL('image/png');
+      link.href = offscreen.toDataURL('image/png');
       link.click();
     }
+    function downloadChartAsPng(canvasId, filename) { downloadCanvasPNG(canvasId, filename); }
     document.getElementById('downloadBarChartBtn').addEventListener('click', () => downloadChartAsPng('barPlanActualChart','portfolio-trend'));
     document.getElementById('downloadAchievementChartBtn').addEventListener('click', () => downloadChartAsPng('horizontalAchievementChart','gap-contribution'));
     document.getElementById('downloadVarianceTrendBtn').addEventListener('click', () => downloadChartAsPng('varianceTrendChart','category-variance'));
@@ -6330,6 +6533,26 @@
     document.getElementById('downloadCatGapChartBtn').addEventListener('click', () => downloadChartAsPng('categoryGapChart','category-gap'));
     // FIX 5: primary KPIs chart download
     document.getElementById('downloadPrimaryKpisBtn').addEventListener('click', () => downloadChartAsPng('primaryKpisChart','primary-kpis-monthly-trend'));
+
+    // Feature 6: Heatmap PNG download
+    document.getElementById('downloadHeatmapBtn')?.addEventListener('click', async () => {
+      const heatmapContainer = document.getElementById('heatmapContainer');
+      if (!heatmapContainer) { showToast('Heatmap not available', 'error'); return; }
+      try {
+        const isDark = document.documentElement.dataset.theme !== 'light';
+        const bgColor = isDark ? '#020617' : '#f4f6fb';
+        const canvas = await html2canvas(heatmapContainer, { scale: 2, useCORS: true, backgroundColor: bgColor, logging: false });
+        const link = document.createElement('a');
+        const dateStr = new Date().toISOString().slice(0,10);
+        link.download = `kpi-heatmap-${dateStr}.png`;
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        showToast('Heatmap downloaded as PNG', 'success');
+      } catch(e) {
+        console.error('Heatmap download error:', e);
+        showToast('Heatmap download failed', 'error');
+      }
+    });
 
     // IMP 3: Quick period selector
     document.getElementById('periodSelect')?.addEventListener('change', handlePeriodChange);
